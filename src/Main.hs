@@ -1,11 +1,13 @@
 {-# LANGUAGE
 
 GADTs,
-RankNTypes
+StandaloneDeriving
 
 
 #-}
+
 module Main where
+import Control.Monad
 
 
 
@@ -21,23 +23,25 @@ data KeyWord =
 {- data Symbol = -}
 type Symbol = String
 
-data ExprC a  where
-  NumC :: Int -> ExprC Int
-  PlusC :: ExprC a -> ExprC a -> ExprC a
-  MultC :: ExprC a -> ExprC a -> ExprC a
-  VarC :: Symbol -> ExprC a
+data ExprC a where
+  NumC :: Int -> ExprC Int;
+  PlusC :: ExprC a -> ExprC a -> ExprC a;
+  MultC :: ExprC a -> ExprC a -> ExprC a;
+  VarC ::  Symbol -> ExprC a;
   -- func :: name -> param -> body -> end
-  FunC :: Symbol -> Symbol -> ExprC a -> ExprC a
+  FunC ::  Symbol -> Symbol -> ExprC a -> ExprC a;
   -- apply :: arg (as expr)-> body -> end
-  AppC :: ExprC a -> ExprC a -> ExprC a
+  AppC ::  ExprC a -> ExprC a -> ExprC a;
   -- lambda expression :: arg (as expr) -> body -> end
-  LamC :: Symbol -> ExprC a -> ExprC a
+  LamC ::  Symbol -> ExprC a -> ExprC a;
   -- setC :: name -> expr -> end
-  SetC :: Symbol -> ExprC a -> ExprC a
+  SetC ::  Symbol -> ExprC a -> ExprC a;
   -- seqC :: seq1 -> seq2 -> end
-  SeqC :: ExprC a -> ExprC a -> ExprC a
+  SeqC ::  ExprC a -> ExprC a -> ExprC a;
   -- objC :: listof symbol -> listof expr -> end
-  ObjC :: [Symbol] -> [ExprC a] -> ExprC a
+  ObjC ::  [Symbol] -> [ExprC a] -> ExprC a
+
+deriving instance Eq (ExprC a)
 
 instance Show (ExprC a) where
 
@@ -76,6 +80,8 @@ data Value a where
   ClosV :: Symbol -> ExprC a -> Env -> Value a
   ObjV :: [Symbol] -> [Value a] -> Value a
 
+deriving instance Eq (Value a)
+
 instance Show (Value a) where
   showsPrec _ (NumV i) =
     showString "NumV "
@@ -113,10 +119,14 @@ data Binding a where
   Bind :: [(Symbol, Location)] -> Binding a
 data Env a = Env [Binding a]
 -}
-data Cell a = Cell (Location, Value a)
-data Store a = Store [Cell a]
+data Cell a = Cell (Location, Value a) deriving Eq
+data Store a = Store [Cell a] deriving Eq
 
-data Result v s = Result (Value v, Store s)
+data Result va sa = Result (Value va, Store sa) deriving Eq
+
+valFromResult :: Result va sa -> Value va
+valFromResult (Result (v, s)) = v
+
 
 lookupLoc :: Symbol -> Env -> Maybe Location
 lookupLoc sym [] = Nothing
@@ -130,6 +140,12 @@ lookupVal loc (Store ( (Cell(loc_, val_)):cells )) =
   if loc == loc_ then (Just val_)
   else lookupVal loc (Store cells)
 
+
+hasNothing :: Eq a => [Maybe a] -> Bool
+hasNothing [] = True
+hasNothing (x:xs) =
+  if x == Nothing then True
+  else hasNothing xs
 
 
 interp :: ExprC a -> Env -> Store a -> Maybe (Result a a)
@@ -151,6 +167,29 @@ interp expr env store =
         case numMult v1 v2 of
           Just v -> Just $ Result(v, s2)
           _ -> Nothing
+    ObjC syms exprs ->
+      -- mrs :: [Maybe Result]
+      let mayResList = map (\expr -> interp expr env store) exprs in
+        if (hasNothing mayResList) == True then Nothing
+        else
+          -- mayRes :: Maybe Result
+          -- r :: Result
+          -- liftM2 (Result -> Value) -> Maybe Result -> Maybe Value
+          let mayVs = map (\mayRes ->
+                          (liftM
+                           (\r -> valFromResult r)
+                           mayRes)
+                       ) mayResList
+          in
+            let go [] rs = rs
+                go (x:xs) rs =
+                  case x of
+                    Just v -> go xs (rs++[v])
+                    Nothing -> []
+            in
+              let valList = go mayVs [] in
+              if valList == [] then Nothing
+              else Just $ Result ((ObjV syms valList), store)
     _ -> Nothing
 
 -- interp :: [ExprC a] -> 
@@ -165,3 +204,4 @@ main = do
       Just (Result (val, _)) ->
         putStrLn $ show val
       _ -> putStrLn "fuck"
+  
